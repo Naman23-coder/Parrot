@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core import Parrot, Cog
+from core import Parrot, Cog, Context
 
 from utilities.database import parrot_db
 from utilities.infraction import warn
@@ -20,8 +20,7 @@ class MentionProt(Cog):
         self.data = {}
         self.clear_data.start()
 
-    @Cog.listener()
-    async def on_message(self, message: discord.Message):
+    async def _on_message_passive(self, message: discord.Message):
         if message.author.bot or (not message.guild):
             return
 
@@ -78,12 +77,23 @@ class MentionProt(Cog):
                     message=message,
                     at=message.created_at,
                 )
+                ctx = await self.bot.get_context(message, cls=Context)
+                await self.bot.get_cog("Moderator").warn(target=message.author, cls=ctx)
 
             if len(message.mentions) >= count:
                 await message.channel.send(
                     f"{message.author.mention} *{random.choice(quotes)}* **[Mass Mention] {'[Warning]' if to_warn else ''}**",
                     delete_after=10,
                 )
+
+    @Cog.listener()
+    async def on_message(self, message: discord.Message):
+        await self._on_message_passive(message)
+
+    @Cog.listener()
+    async def on_message_edit(self, before: discord.Message, after: discord.Message):
+        if before.content != after.content:
+            await self._on_message_passive(after)
 
     @tasks.loop(seconds=900)
     async def clear_data(self):

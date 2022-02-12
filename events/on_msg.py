@@ -3,7 +3,7 @@ from string import whitespace
 
 from core import Parrot, Cog
 
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 import aiohttp
 import asyncio
@@ -25,6 +25,7 @@ from utilities.buttons import Delete
 from time import time
 
 collection = parrot_db["global_chat"]
+afk = parrot_db["afk"]
 
 with open("extra/profanity.json") as f:
     bad_dict = json.load(f)
@@ -58,7 +59,14 @@ BITBUCKET_RE = re.compile(
     r"/(?P<file_path>[^#>]+)(\?[^#>]+)?(#lines-(?P<start_line>\d+)(:(?P<end_line>\d+))?)"
 )
 
-whitelist = [615785223296253953, 741614468546560092, 523452718413643788]
+whitelist = [
+    615785223296253953,  # `Tari#2755`
+    741614468546560092,  # `!! Ritik Ranjan [*.*]#9230`
+    523452718413643788,  # `Hay#6433`
+    699839134709317642,  # `proguy914629.bot#5419`
+    531179463673774080,  # `ROLEX#6596`
+    857103603130302514,  # `Var_Monke#1354`
+]
 
 
 class OnMsg(Cog, command_attrs=dict(hidden=True)):
@@ -358,6 +366,7 @@ class OnMsg(Cog, command_attrs=dict(hidden=True)):
             return
         await msg_increment(message.guild.id, message.author.id)  # for gw only
         await self.quick_answer(message)
+        await self._on_message_passive(message)
         channel = await collection.find_one(
             {"_id": message.guild.id, "channel_id": message.channel.id}
         )
@@ -559,8 +568,51 @@ class OnMsg(Cog, command_attrs=dict(hidden=True)):
                 )
 
     @Cog.listener()
-    async def on_message_edit(self, before, after):
-        pass
+    async def on_message_edit(self, before: discord.Message, after: discord.Message):
+        if before.content != after.content:
+            await self._on_message_passive(after)
+
+    async def _on_message_passive(self, message: discord.Message):
+        if not message.guild:
+            return
+        if message.author.bot:
+            return
+
+        if data := await afk.find_one(
+            {
+                "$or": [
+                    {"messageAuthor": message.author.id, "guild": message.guild.id},
+                    {"messageAuthor": message.author.id, "global": True},
+                ]
+            }
+        ):
+            if message.channel.id in data["ignoredChannel"]:
+                return  # There exists `$nin` operator in MongoDB
+            await message.channel.send(
+                f"{message.author.mention} welcome back! You were AFK <t:{int(data['at'])}:R>\n"
+                f"> You were mentioned **{len(data['pings'])}** times"
+            )
+            await afk.delete_one({"_id": data["_id"]})
+
+        if message.mentions:
+            for user in message.mentions:
+                if data := await afk.find_one(
+                    {
+                        "$or": [
+                            {"messageAuthor": user.id, "guild": user.guild.id},
+                            {"messageAuthor": user.id, "global": True},
+                        ]
+                    }
+                ):
+                    post = {
+                        "messageAuthor": message.author.id,
+                        "channel": message.channel.id,
+                        "messageURL": message.jump_url,
+                    }
+                    afk.update_one({"_id": data["_id"]}, {"$addToSet": {"pings": post}})
+                    await message.channel.send(
+                        f"{message.author.mention} {self.bot.get_user(data['messageAuthor'])} is AFK: {data['text']}"
+                    )
 
     @Cog.listener()
     async def on_raw_message_edit(self, payload):

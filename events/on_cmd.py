@@ -29,21 +29,6 @@ class ErrorView(discord.ui.View):
         self.ctx = ctx
         self.error = error
 
-    async def paste(self, text: str, *, lang: str = "txt"):
-        """Return an online bin of given text"""
-        async with aiohttp.ClientSession() as aioclient:
-            post = await aioclient.post("https://hastebin.com/documents", data=text)
-            if post.status == 200:
-                response = await post.text()
-                return f"https://hastebin.com/{response[8:-2]}"
-
-            # Rollback bin
-            post = await aioclient.post(
-                "https://bin.readthedocs.fr/new", data={"code": text, "lang": lang}
-            )
-            if post.status == 200:
-                return str(post.url)
-
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user and interaction.user.id == self.author_id:
             return True
@@ -56,16 +41,7 @@ class ErrorView(discord.ui.View):
     async def show_full_traceback(
         self, button: discord.ui.button, interaction: discord.Interaction
     ):
-        tb = traceback.format_exception(
-            type(self.error), self.error, self.error.__traceback__
-        )
-        tbe = "".join(tb) + ""
-        er = f"```py\nIgnoring exception in command {self.ctx.command.name}: {tbe}\n```"
-        text = await self.paste(er)
-        if len(er) < 1950:
-            await interaction.response.send_message(er, ephemeral=True)
-        else:
-            await interaction.response.send_message(text, ephemeral=True)
+        await interaction.response.send_message(str(self.error), ephemeral=True)
 
 
 class Cmd(Cog, command_attrs=dict(hidden=True)):
@@ -74,21 +50,6 @@ class Cmd(Cog, command_attrs=dict(hidden=True)):
     def __init__(self, bot: Parrot):
         self.bot = bot
         self.collection = parrot_db["logging"]
-
-    async def paste(self, text: str):
-        """Return an online bin of given text"""
-        async with aiohttp.ClientSession() as aioclient:
-            post = await aioclient.post("https://hastebin.com/documents", data=text)
-            if post.status == 200:
-                response = await post.text()
-                return f"https://hastebin.com/{response[8:-2]}"
-
-            # Rollback bin
-            post = await aioclient.post(
-                "https://bin.readthedocs.fr/new", data={"code": text, "lang": "txt"}
-            )
-            if post.status == 200:
-                return str(post.url)
 
     @Cog.listener()
     async def on_command(self, ctx: Context):
@@ -102,12 +63,12 @@ class Cmd(Cog, command_attrs=dict(hidden=True)):
         """Only for logging"""
         if ctx.cog is None:
             return
-        if ctx.cog.qualified_name.lower() == "mod":
+        if ctx.cog.qualified_name.lower() == "moderator":
             if data := await self.collection.find_one(
-                {"_id": ctx.guild.id, "on_mod_command": {"$exists": True}}
+                {"_id": ctx.guild.id, "on_mod_commands": {"$exists": True}}
             ):
                 webhook = discord.Webhook.from_url(
-                    data["on_mod_command"], session=self.bot.session
+                    data["on_mod_commands"], session=self.bot.session
                 )
                 if webhook:
                     main_content = f"""**On Moderator Command**
@@ -123,11 +84,12 @@ class Cmd(Cog, command_attrs=dict(hidden=True)):
                     )
 
         if ctx.cog.qualified_name.lower() == "botconfig":
+            await self.bot.update_server_config_cache(ctx.guild.id)
             if data := await self.collection.find_one(
-                {"_id": ctx.guild.id, "on_config_command": {"$exists": True}}
+                {"_id": ctx.guild.id, "on_config_commands": {"$exists": True}}
             ):
                 webhook = discord.Webhook.from_url(
-                    data["on_config_command"], session=self.bot.session
+                    data["on_config_commands"], session=self.bot.session
                 )
                 if webhook:
                     main_content = f"""**On Config Command**
@@ -195,6 +157,7 @@ class Cmd(Cog, command_attrs=dict(hidden=True)):
                 fmt = " and ".join(missing)
             ERROR_EMBED.description = f"You need the following permission(s) to the run the command.```\n{fmt}```"
             ERROR_EMBED.title = f"{QUESTION_MARK} Missing permissions {QUESTION_MARK}"
+            ctx.command.reset_cooldown(ctx)
             return await ctx.reply(random.choice(quote), embed=ERROR_EMBED)
 
         if isinstance(error, commands.MissingRole):
@@ -207,6 +170,7 @@ class Cmd(Cog, command_attrs=dict(hidden=True)):
                 f"You need the the following role(s) to use the command```\n{fmt}```"
             )
             ERROR_EMBED.title = f"{QUESTION_MARK} Missing Role {QUESTION_MARK}"
+            ctx.command.reset_cooldown(ctx)
             return await ctx.reply(random.choice(quote), embed=ERROR_EMBED)
 
         if isinstance(error, commands.MissingAnyRole):
@@ -219,6 +183,7 @@ class Cmd(Cog, command_attrs=dict(hidden=True)):
                 f"You need the the following role(s) to use the command```\n{fmt}```"
             )
             ERROR_EMBED.title = f"{QUESTION_MARK} Missing Role {QUESTION_MARK}"
+            ctx.command.reset_cooldown(ctx)
             return await ctx.reply(random.choice(quote), embed=ERROR_EMBED)
 
         # if isinstance(error, commands.NoPrivateMessage):
@@ -234,6 +199,7 @@ class Cmd(Cog, command_attrs=dict(hidden=True)):
             ERROR_EMBED.description = "This command will only run in NSFW marked channel. https://i.imgur.com/oe4iK5i.gif"
             ERROR_EMBED.title = f"{QUESTION_MARK} NSFW Channel Required {QUESTION_MARK}"
             ERROR_EMBED.set_image(url="https://i.imgur.com/oe4iK5i.gif")
+            ctx.command.reset_cooldown(ctx)
             return await ctx.reply(random.choice(quote), embed=ERROR_EMBED)
 
         if isinstance(error, commands.NotOwner):
@@ -243,11 +209,13 @@ class Cmd(Cog, command_attrs=dict(hidden=True)):
             # return await ctx.reply(random.choice(quote), embed=ERROR_EMBED)
 
         if isinstance(error, commands.PrivateMessageOnly):
-            ERROR_EMBED.description = "This comamnd will only work in DM messages"
-            ERROR_EMBED.title = f"{QUESTION_MARK} Private Message Only {QUESTION_MARK}"
-            return await ctx.reply(random.choice(quote), embed=ERROR_EMBED)
+            return
+            # ERROR_EMBED.description = "This comamnd will only work in DM messages"
+            # ERROR_EMBED.title = f"{QUESTION_MARK} Private Message Only {QUESTION_MARK}"
+            # return await ctx.reply(random.choice(quote), embed=ERROR_EMBED)
 
         if isinstance(error, commands.BadArgument):
+            ctx.command.reset_cooldown(ctx)
             if isinstance(error, commands.MessageNotFound):
                 ERROR_EMBED.description = (
                     "Message ID/Link you provied is either invalid or deleted"
@@ -286,6 +254,7 @@ class Cmd(Cog, command_attrs=dict(hidden=True)):
 
         if isinstance(error, commands.MissingRequiredArgument):
             command = ctx.command
+            ctx.command.reset_cooldown(ctx)
             ERROR_EMBED.description = f"Please use proper syntax.```\n{ctx.clean_prefix}{command.qualified_name}{'|' if command.aliases else ''}{'|'.join(command.aliases if command.aliases else '')} {command.signature}```"
             ERROR_EMBED.title = (
                 f"{QUESTION_MARK} Missing Required Argument {QUESTION_MARK}"
@@ -300,16 +269,19 @@ class Cmd(Cog, command_attrs=dict(hidden=True)):
             return await ctx.reply(random.choice(quote), embed=ERROR_EMBED)
 
         if isinstance(error, (commands.BadUnionArgument, commands.BadLiteralArgument)):
+            ctx.command.reset_cooldown(ctx)
             ERROR_EMBED.description = f"`@Parrot {ctx.command}` for help"
             ERROR_EMBED.title = f"{QUESTION_MARK} Bad Argument {QUESTION_MARK}"
             return await ctx.reply(random.choice(quote), embed=ERROR_EMBED)
 
         if isinstance(error, ParrotCheckFailure):
+            ctx.command.reset_cooldown(ctx)
             ERROR_EMBED.description = f"{error.__str__().format(ctx=ctx)}"
             ERROR_EMBED.title = f"{QUESTION_MARK} Unexpected Error {QUESTION_MARK}"
             return await ctx.reply(random.choice(quote), embed=ERROR_EMBED)
 
         if isinstance(error, commands.CheckAnyFailure):
+            ctx.command.reset_cooldown(ctx)
             ERROR_EMBED.description = " or ".join(
                 [error.__str__().format(ctx=ctx) for error in error.errors]
             )

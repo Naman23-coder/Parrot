@@ -22,8 +22,6 @@ from utilities.regex import LINKS_NO_PROTOCOLS
 from utilities.infraction import delete_many_warn, custom_delete_warn, warn, show_warn
 
 collection = parrot_db["server_config"]
-mute_collection = parrot_db["mute"]
-ban_collection = parrot_db["banned_members"]
 
 
 class Moderator(Cog):
@@ -31,11 +29,13 @@ class Moderator(Cog):
 
     def __init__(self, bot: Parrot):
         self.bot = bot
-        self.unban_task.start()
 
     @property
     def display_emoji(self) -> discord.PartialEmoji:
         return discord.PartialEmoji(name="moderator", id=892424227007918121)
+
+    def cog_unload(self):
+        self.warn.cancel()
 
     async def log(self, ctx, cmd, performed_on, reason):
         """A simple and nerdy Logging System"""
@@ -263,6 +263,7 @@ class Moderator(Cog):
             member,
             duration,
             reason,
+            bot=self.bot,
         )
         await self.log(
             ctx,
@@ -1327,10 +1328,12 @@ class Moderator(Cog):
 
         return await msg.delete(delay=0)
 
-    @commands.command()
+    @commands.command(name="warn")
     @commands.bot_has_permissions(embed_links=True)
     @commands.check_any(is_mod(), commands.has_permissions(manage_messages=True))
-    async def warn(self, ctx: Context, user: discord.Member, *, reason: reason_convert):
+    async def warnuser(
+        self, ctx: Context, user: discord.Member, *, reason: reason_convert
+    ):
         """To warn the user"""
         try:
             await user.send(
@@ -1338,7 +1341,7 @@ class Moderator(Cog):
             )
         except discord.Forbidden:
             pass
-        finally:
+        else:
             _ = await warn(
                 ctx.guild,
                 user,
@@ -1348,6 +1351,8 @@ class Moderator(Cog):
                 at=ctx.message.created_at.timestamp(),
             )
             await ctx.send(f"{ctx.author.mention} **{user}** warned")
+        finally:
+            await self.warn.start()
 
     @commands.command()
     @commands.bot_has_permissions(embed_links=True)
@@ -1358,6 +1363,7 @@ class Moderator(Cog):
             return
         await custom_delete_warn(ctx.guild, warn_id=warn_id)
         await ctx.send(f"{ctx.author.mention} deleted the warn ID: {warn_id}")
+        await self.warn_task.start()
 
     @commands.command()
     @commands.bot_has_permissions(embed_links=True)
@@ -1380,6 +1386,7 @@ class Moderator(Cog):
         await ctx.send(
             f"{ctx.author.mention} deleted all warns matching: `{'`, `'.join(payload)}`"
         )
+        await self.warn_task.start()
 
     @commands.command()
     @commands.check_any(is_mod(), commands.has_permissions(manage_messages=True))
@@ -1400,28 +1407,12 @@ class Moderator(Cog):
         page = RoboPages(TextPageSource(data, max_size=1000), ctx=ctx)
         await page.start()
 
-    @tasks.loop(seconds=2)
-    async def unban_task(self):
-        await self.bot.wait_until_ready()
-        async for data in ban_collection.find(
-            {"duration": {"$lte": datetime.utcnow().timestamp()}}
-        ):
-            guild = self.bot.get_guild(data["guild_id"])
-            if not guild:
-                await ban_collection.delete_one({"_id": data["_id"]})
-            else:
-                try:
-                    await guild.unban(
-                        discord.Object(id=data["member_id"]),
-                        reason="Ban duration expires!",
-                    )
-                except discord.NotFound:
-                    pass
-                finally:
-                    await ban_collection.delete_one({"_id": data["_id"]})
-
-    @tasks.loop()
-    async def warn(self, **kw):
+    @tasks.loop(count=1)
+    async def warn_task(self, **kw):
+        """Main system to warn
+        - target: discord.Member
+        - ctx: Context
+        """
         target: Union[discord.Member, discord.User] = kw.get("target")
         ctx: Context = kw.get("ctx")
         if not (target and ctx):
@@ -1436,20 +1427,21 @@ class Moderator(Cog):
             for i in data["warn_auto"]:
                 if i["count"] == count:
                     await self.execute_action(
-                        action=i["action"],
+                        action=i["action"].lower(),
                         duration=i["duration"],
                         mod=ctx.author,
                         ctx=ctx,
                     )
-                    return
 
     async def execute_action(self, **kw):
         action: str = kw.get("action")
         duration: str = kw.get("duration")
         dt = ShortTime(duration)
-        mod: discord.Member | discord.User = kw.get("mod")
         ctx: Context = kw.get("ctx")
         target: discord.Member | discord.User = kw.get("target")
+        perms = ctx.guild.me.guild_permisisons
+        if not (perms.kick_members and perms.moderate_members and perms.ban_members):
+            return  # sob sob sob
         if action == "kick":
             return await mt._kick(
                 ctx.guild,
@@ -1503,3 +1495,7 @@ class Moderator(Cog):
                 f"Automod. {target} reached warncount threshold",
                 True,
             )
+
+    @warn_task.before_loop
+    async def before_warn(self):
+        await self.bot.wait_until_ready()

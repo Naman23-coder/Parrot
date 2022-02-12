@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core import Parrot, Cog
+from core import Parrot, Cog, Context
 
 from discord.ext import commands
 import discord
@@ -20,6 +20,8 @@ class SpamProt(Cog):
         self.cd_mapping = commands.CooldownMapping.from_cooldown(
             5, 5, commands.BucketType.member
         )
+        self.data_update.start()
+        self.data = {}
 
     async def delete(self, message: discord.Message) -> None:
         def check(m: discord.Message):
@@ -75,6 +77,10 @@ class SpamProt(Cog):
                         moderator=self.bot.user,
                         message=message,
                         at=message.created_at,
+                    )
+                    ctx = await self.bot.get_context(message, cls=Context)
+                    await self.bot.get_cog("Moderator").warn(
+                        target=message.author, cls=ctx
                     )
 
                 await message.channel.send(

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from cogs.meta.robopage import SimplePages
 
 from core import Parrot, Cog, Context
 from discord.ext import commands, tasks
@@ -6,6 +7,8 @@ import discord
 
 import typing
 import datetime
+import asyncio
+
 from utilities.database import parrot_db, todo
 from utilities.time import ShortTime
 from utilities.paginator import PaginationView
@@ -13,16 +16,18 @@ from utilities.paginator import PaginationView
 from cogs.utils import method as mt
 from cogs.utils.method import giveaway
 
+afk = parrot_db["afk"]
+
 
 class Utils(Cog):
     """Utilities for server, UwU"""
 
     def __init__(self, bot: Parrot):
         self.bot = bot
-        self.gw_tasks.start()
         self.react_collection = parrot_db["reactions"]
         self.reminder_task.start()
         self.collection = parrot_db["timers"]
+        self.lock = asyncio.Lock()
 
     @property
     def display_emoji(self) -> discord.PartialEmoji:
@@ -30,90 +35,127 @@ class Utils(Cog):
 
     async def create_timer(
         self,
-        channel: typing.Union[discord.TextChannel, discord.Thread],
-        message: discord.Message,
-        member: discord.Member,
-        age: int,
         *,
-        remark: str = None,
-        dm: bool = False,
-        todo: bool = False,
+        expires_at: float = None,
+        created_at: float = None,
+        content: str = None,
+        message: discord.Message = None,
+        dm_notify: bool = False,
+        is_todo: bool = False,
+        **kw,
     ):
-        collection = self.collection
+        """|coro|
+
+        Master Function to register Timers.
+
+        Parameters
+        ----------
+        expires_at: :class:`float`
+            Timer exprire timestamp
+        created_at: :class:`float`
+            Timer created timestamp
+        content: :class:`str`
+            Content of the Timer
+        message: :class:`discord.Message`
+            Message Object
+        dm_notify: :class:`bool`
+            To notify the user or not
+        is_todo: :class:`bool`
+            To provide whether the timer related to `TODO`
+        """
+        embed: dict = kw.get("embed_like") or kw.get("embed")
+        mod_action: dict = kw.get("mod_action")
+        cmd_exec_str: str = kw.get("cmd_exec_str")
+
         post = {
             "_id": message.id,
-            "channel": channel.id,
-            "age": age,
-            "author": member.id,
-            "remark": remark,
-            "dm": dm,
-            "todo": False,
+            "expires_at": expires_at,
+            "created_at": created_at,
+            "content": content,
+            "embed": embed,
+            "messageURL": message.jump_url,
+            "messageAuthor": message.author.id,
+            "messageChannel": message.channel.id,
+            "dm_notify": dm_notify,
+            "is_todo": is_todo,
+            "mod_action": mod_action,
+            "cmd_exec_str": cmd_exec_str,
+            "extra": kw.get("extra"),
+            **kw,
         }
-        await collection.insert_one(post)
+        await self.collection.insert_one(post)
 
-    async def delete_timer(self, member: discord.Member, message_id: int):
+    async def delete_timer(self, **kw):
         collection = self.collection
-        await collection.delete_one({"_id": message_id})
+        await collection.delete_one(kw)
 
-    async def get_all_timers(self, member: discord.User) -> list[discord.Embed]:
-        collection = self.collection
-        records = []
-        async for data in collection.find({"author": member.id}):
-            embed = discord.Embed(
-                title="Timers", timestamp=datetime.utcnow(), color=member.color
-            ).set_footer(text=f"{member}")
-            embed.description = f"```\nTASK: {data['remark'] if data['remark'] else 'No description was given'}```\n`Message ID :` **{data['_id']}**\n`Channel ID :` **<#{data['channel']}>**\n`Reminder at:` <t:{int(data['age'])}>"
-            records.append(embed)
-        return records
-
-    @commands.command()
+    @commands.group(aliases=["remind"], invoke_without_command=True)
     @Context.with_type
     async def remindme(
-        self, ctx: Context, age: ShortTime, *, task: commands.clean_content
+        self, ctx: Context, age: ShortTime, *, task: commands.clean_content = None
     ):
         """To make reminders as to get your tasks done on time"""
-        seconds = age.dt.timestamp()
-        text = f"{ctx.author.mention} alright, you will be mentioned in {ctx.channel.mention} at **<t:{int(seconds)}>**. To delete your reminder consider typing ```\n{ctx.clean_prefix}delremind {ctx.message.id}```"
-        try:
-            await ctx.reply(f"{ctx.author.mention} check you DM")
-            await ctx.author.send(text)
-        except discord.Fobidden:
-            await ctx.reply(text)
-        await self.create_timer(
-            ctx.channel, ctx.message, ctx.author, seconds, remark=task, dm=False
-        )
+        if not ctx.invoked_subcommand:
+            seconds = age.dt.timestamp()
+            text = (
+                f"{ctx.author.mention} alright, you will be mentioned in {ctx.channel.mention} at **<t:{int(seconds)}>**."
+                f"To delete your reminder consider typing ```\n{ctx.clean_prefix}remind delete {ctx.message.id}```"
+            )
+            try:
+                await ctx.reply(f"{ctx.author.mention} check your DM", delete_after=5)
+                await ctx.author.send(text)
+            except discord.Fobidden:
+                await ctx.reply(text)
+            await self.create_timer(
+                expires_at=seconds,
+                created_at=ctx.message.created_at.timestamp(),
+                content=task,
+                message=ctx.message,
+            )
 
-    @commands.command()
+    @remindme.command(name="list")
     @Context.with_type
-    async def reminders(self, ctx: Context):
+    async def _list(self, ctx: Context):
         """To get all your reminders"""
-        em_list = await self.get_all_timers(ctx.author)
-        if not em_list:
-            return await ctx.reply(f"{ctx.author.mention} you don't have any reminders")
-        await PaginationView(em_list).start(ctx)
+        ls = []
+        async for data in self.collection.find({"messageAuthor": ctx.author.id}):
+            ls.append(
+                f"<t:{int(data['expires_at'])}:R>\n> [{data['content']}]({data['messageURL']})"
+            )
+        if not ls:
+            return await ctx.send(f"{ctx.author.mention} you don't have any reminders")
+        p = SimplePages(ls, ctx=ctx, per_page=4)
+        await p.start()
 
-    @commands.command()
+    @remindme.command(name="del", aliases=["delete"])
     @Context.with_type
     async def delremind(self, ctx: Context, message: int):
         """To delete the reminder"""
-        await self.delete_timer(ctx.author, message)
+        await self.delete_timer(_id=message)
         await ctx.reply(f"{ctx.author.mention} deleted reminder of ID: **{message}**")
 
-    @commands.command()
+    @remindme.command(name="dm")
     @Context.with_type
     async def remindmedm(
-        self, ctx: Context, age: ShortTime, *, task: commands.clean_content
+        self, ctx: Context, age: ShortTime, *, task: commands.clean_content = None
     ):
         """Same as remindme, but you will be mentioned in DM. Make sure you have DM open for the bot"""
         seconds = age.dt.timestamp()
-        text = f"{ctx.author.mention} alright, you will be mentioned in your DM (Make sure you have your DM open for this bot) within **<t:{int(seconds)}>**. To delete your reminder consider typing ```\n{ctx.clean_prefix}delremind {ctx.message.id}```"
+        text = (
+            f"{ctx.author.mention} alright, you will be mentioned in your DM (Make sure you have your DM open for this bot) "
+            f"within **<t:{int(seconds)}>**. To delete your reminder consider typing ```\n{ctx.clean_prefix}remind delete {ctx.message.id}```"
+        )
         try:
-            await ctx.reply(f"{ctx.author.mention} check you DM")
+            await ctx.reply(f"{ctx.author.mention} check your DM", delete_after=5)
             await ctx.author.send(text)
         except discord.Fobidden:
             await ctx.reply(text)
         await self.create_timer(
-            ctx.channel, ctx.message, ctx.author, seconds, remark=task, dm=True
+            expires_at=seconds,
+            created_at=ctx.message.created_at.timestamp(),
+            content=task,
+            message=ctx.message,
+            dm_notify=True,
         )
 
     @commands.group(invoke_without_command=True)
@@ -262,113 +304,119 @@ class Utils(Cog):
         """To set timer for your Timer"""
         await mt._set_timer_todo(self.bot, ctx, name, deadline.dt.timestamp())
 
-    @commands.group(name="giveaway")
-    @commands.bot_has_permissions(embed_links=True, add_reactions=True)
-    @commands.has_permissions(manage_guild=True, add_reactions=True)
-    async def giveaway(self, ctx: Context):
-        """To host small giveaways in the server. Do not use this as dedicated server giveaway"""
-        if ctx.invoked_subcommand is None:
-            await self.bot.invoke_help_command(ctx)
+    @commands.group(invoke_without_command=True)
+    async def afk(self, ctx: Context, *, text: commands.clean_content = None):
+        """To set AFK
 
-    @giveaway.command()
-    async def create(self, ctx: Context):
-        """To create a giveaway in the server"""
-        await mt.create_gw(self.bot, ctx)
-
-    @giveaway.command()
-    async def end(self, ctx: Context, message: int):
-        """To end the giveaway"""
-        await mt.end_giveaway_with_id(self.bot, message, ctx=ctx)
-        await giveaway.delete_one({"_id": message})
-
-    @giveaway.command()
-    async def reroll(self, ctx: Context, message: int):
-        """To reroll the giveaway winners"""
-        await mt.end_giveaway_with_id(self.bot, message, ctx=ctx)
-
-    @tasks.loop(seconds=1)
-    async def gw_tasks(self):
-        await self.bot.wait_until_ready()
-        async for data in giveaway.find(
-            {"endtime": {"$lte": datetime.datetime.utcnow().timestamp()}}
-        ):
-            message = data["_id"]
-            guild = self.bot.get_guild(data["guild"])
-            if not guild:
-                await giveaway.delete_one({"_id": message})
+        AFK will be removed once you message.
+        If provided permissions, bot will add `[AFK]` as the prefix in nickname.
+        The deafult AFK is on Server Basis
+        """
+        if not ctx.invoked_subcommand:
+            if text and text.split(" ")[0].lower() in ("global", "till", "ignore"):
                 return
-                # bot is being removed from the guild, or the guild is deleted
-            messageID = data["_id"]
-            channelID = data["channel"]
-            channel = guild.get_channel(channelID)
+            post = {
+                "_id": ctx.message.id,
+                "messageURL": ctx.message.jump_url,
+                "messageAuthor": ctx.author.id,
+                "guild": ctx.guild.id,
+                "channel": ctx.channel.id,
+                "pings": [],
+                "at": ctx.message.created_at.timestamp(),
+                "global": False,
+                "text": text or "AFK",
+                "ignoredChannel": [],
+            }
+            await ctx.send(f"{ctx.author.mention} AFK: {text or 'AFK'}")
+            await afk.insert_one({**post})
 
-            if not channel:
-                await giveaway.delete_one({"_id": message})
-                return
-            async for msg in channel.history(
-                limit=1,
-                before=discord.Object(messageID + 1),
-                after=discord.Object(messageID - 1),
-            ):  # this is good. UwU
-                if msg is None:
-                    await channel.send(
-                        "Giveaway can not be proceeded! No message found! Proably deleted"
-                    )
-                    await giveaway.delete_one({"_id": message})
-                    return
-                await msg.remove_reaction("\N{PARTY POPPER}", channel.guild.me)
+    @afk.command(name="global")
+    async def _global(self, ctx: Context, *, text: commands.clean_content = None):
+        """To set the AFK globally (works only if the bot can see you)"""
+        post = {
+            "_id": ctx.message.id,
+            "messageURL": ctx.message.jump_url,
+            "messageAuthor": ctx.author.id,
+            "guild": ctx.guild.id,
+            "channel": ctx.channel.id,
+            "pings": [],
+            "at": ctx.message.created_at.timestamp(),
+            "global": True,
+            "text": text or "AFK",
+            "ignoredChannel": [],
+        }
+        await afk.insert_one({**post})
+        await ctx.send(f"{ctx.author.mention} AFK: {text or 'AFK'}")
 
-            for reaction in msg.reactions:
-                if str(reaction) == "\N{PARTY POPPER}":
-                    if reaction.count < (data["winners"] - 1):
-                        await channel.send(
-                            "Winner can not be decided due to insufficient reaction count."
-                        )
-                        await giveaway.delete_one({"_id": message})
-                        return
-                    users = await reaction.users().flatten()
-                    ls = await mt.get_winners(
-                        users=users, winners=data["winners"], msg=msg
-                    )
-                    await channel.send(
-                        f"**Congrats {', '.join(member.mention for member in ls)}. You won {data['prize']}.**"
-                    )
-                    await giveaway.delete_one({"_id": message})
+    @afk.command(name="for")
+    async def afk_till(
+        self, ctx: Context, till: ShortTime, *, text: commands.clean_content = None
+    ):
+        """To set the AFK time"""
+        if till.dt.timestamp() - ctx.message.created_at.timestamp() <= 120:
+            return await ctx.send(f"{ctx.author.mention} time must be above 120s")
+        post = {
+            "_id": ctx.message.id,
+            "messageURL": ctx.message.jump_url,
+            "messageAuthor": ctx.author.id,
+            "guild": ctx.guild.id,
+            "channel": ctx.channel.id,
+            "pings": [],
+            "at": ctx.message.created_at.timestamp(),
+            "global": True,
+            "text": text or "AFK",
+            "ignoredChannel": [],
+        }
+        await afk.insert_one({**post})
+        await ctx.send(
+            f"{ctx.author.mention} AFK: {text or 'AFK'}\n> Your AFK status will be removed {discord.utils.format_dt(till.dt, 'R')}"
+        )
+        await self.create_timer(
+            expires_at=till.dt.timestamp(),
+            created_at=ctx.message.created_at.timestamp(),
+            extra={"name": "REMOVE_AFK", "main": {**post}},
+            message=ctx.message,
+        )
 
-            await channel.send(
-                "Winner can not be decided as reactions on the messages had being cleared."
-            )
-            await giveaway.delete_one({"_id": message})
+    @afk.command(name="after")
+    async def afk_after(
+        self, ctx: Context, after: ShortTime, *, text: commands.clean_content = None
+    ):
+        """To set the AFK future time"""
+        if after.dt.timestamp() - ctx.message.created_at.timestamp() <= 120:
+            return await ctx.send(f"{ctx.author.mention} time must be above 120s")
+        post = {
+            "_id": ctx.message.id,
+            "messageURL": ctx.message.jump_url,
+            "messageAuthor": ctx.author.id,
+            "guild": ctx.guild.id,
+            "channel": ctx.channel.id,
+            "pings": [],
+            "at": ctx.message.created_at.timestamp(),
+            "global": True,
+            "text": text or "AFK",
+            "ignoredChannel": [],
+        }
+        await ctx.send(
+            f"{ctx.author.mention} AFK: {text or 'AFK'}\n> Your AFK status will be set {discord.utils.format_dt(after.dt, 'R')}"
+        )
+        await self.create_timer(
+            expires_at=after.dt.timestamp(),
+            created_at=ctx.message.created_at.timestamp(),
+            extra={"name": "SET_AFK", "main": {**post}},
+            message=ctx.message,
+        )
 
-    @tasks.loop(seconds=1.0)
+    @tasks.loop(seconds=3)
     async def reminder_task(self):
-        async for data in self.collection.find(
-            {"age": {"$lte": datetime.datetime.utcnow().timestamp()}}
-        ):
-            channel = self.bot.get_channel(data["channel"])
-            if not channel:
+        async with asyncio.Lock():
+            async for data in self.collection.find(
+                {"expires_at": {"$lte": datetime.datetime.utcnow().timestamp()}}
+            ):
+                cog = self.bot.get_cog("EventCustom")
+                await cog.on_timer_complete(**data)
                 await self.collection.delete_one({"_id": data["_id"]})
-            else:
-                if not data["dm"]:
-                    try:
-                        await channel.send(
-                            f"<@{data['author']}> reminder for: {data['remark']}"
-                        )
-                    except discord.Fobidden:
-                        pass  # this is done as bot may have being denied to send message
-                    await self.collection.delete_one({"_id": data["_id"]})
-                else:
-                    member = channel.guild.get_member(data["author"])
-                    if not member:
-                        await self.collection.delete_one({"_id": data["_id"]})
-                    else:
-                        try:
-                            await member.send(
-                                f"<@{data['author']}> reminder for: {data['remark']}"
-                            )
-                        except discord.Fobidden:
-                            pass  # what if member DM are blocked?
-                        await self.collection.delete_one({"_id": data["_id"]})
-                    if data.get("todo"):
-                        collection = todo[f"{data['author']}"]
-                        await collection.delete_one({"_id": data["_id"]})
+
+    @reminder_task.before_loop
+    async def before_reminder_task(self):
+        await self.bot.wait_until_ready()

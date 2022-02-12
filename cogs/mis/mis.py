@@ -10,7 +10,6 @@ import urllib.parse
 import aiohttp
 import discord
 import re
-import ttg
 import datetime
 import typing
 import os
@@ -21,11 +20,31 @@ import io
 import string
 from html import unescape
 
+import qrcode
+from qrcode.image.styledpil import StyledPilImage
+from qrcode.image.styles.moduledrawers import (
+    RoundedModuleDrawer,
+    CircleModuleDrawer,
+    GappedSquareModuleDrawer,
+    HorizontalBarsDrawer,
+    SquareModuleDrawer,
+    VerticalBarsDrawer,
+)
+from qrcode.image.styles.colormasks import (
+    RadialGradiantColorMask,
+    SquareGradiantColorMask,
+    HorizontalGradiantColorMask,
+    VerticalGradiantColorMask,
+    ImageColorMask,
+    SolidFillColorMask,
+)
+
 from core import Parrot, Context, Cog
 
 from utilities.youtube_search import YoutubeSearch
-from utilities.converters import convert_bool
+from utilities.converters import ToAsync, convert_bool
 from utilities.paginator import PaginationView
+from utilities.ttg import Truths
 
 from PIL import Image
 
@@ -77,6 +96,12 @@ PAD = 10
 class TTFlag(commands.FlagConverter, case_insensitive=True, prefix="--", delimiter=" "):
     var: str
     con: str
+    ints: convert_bool = False
+    ascending: convert_bool = True
+    table_format: str = "psql"
+    aling: str = "center"
+    valuation: convert_bool = False
+    latex: convert_bool = False
 
 
 def _prepare_input(text: str) -> str:
@@ -100,6 +125,60 @@ class InvalidLatexError(Exception):
     def __init__(self, logs: str):
         super().__init__(logs)
         self.logs = logs
+
+
+@ToAsync()
+def _create_qr(
+    text: str,
+    *,
+    version: typing.Optional[int] = 1,
+    board_size: typing.Optional[int] = 10,
+    border: typing.Optional[int] = 4,
+    **kw,
+) -> str:
+    qr = qrcode.QRCode(
+        version=1,
+        error_correction=qrcode.constants.ERROR_CORRECT_L,
+        box_size=board_size,
+        border=border,
+    )
+    qr.add_data(text)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white", **kw)
+    _timestamp = int(datetime.datetime.utcnow().timestamp())  # float float
+    img.save(f"temp/{_timestamp}.png")
+    return f"temp/{_timestamp}.png"
+
+
+class QRCodeFlags(
+    commands.FlagConverter, case_insensitive=True, prefix="--", delimiter=" "
+):
+    board_size: typing.Optional[int] = 10
+    border: typing.Optional[int] = 4
+    module_drawer: typing.Optional[str] = None
+    color_mask: typing.Optional[str] = None
+
+
+qr_modular = {
+    "square": SquareModuleDrawer(),
+    "gapped": GappedSquareModuleDrawer(),
+    "circle": CircleModuleDrawer(),
+    "round": RoundedModuleDrawer(),
+    "vertical": VerticalBarsDrawer(),
+    "ver": VerticalBarsDrawer(),
+    "horizontal": HorizontalBarsDrawer(),
+    "hori": HorizontalBarsDrawer(),
+}
+
+qr_color_mask = {
+    "solid": SolidFillColorMask(),
+    "radial": RadialGradiantColorMask(),
+    "square": SquareGradiantColorMask(),
+    "hor": HorizontalGradiantColorMask(),
+    "horizontal": HorizontalGradiantColorMask(),
+    "vertical": VerticalGradiantColorMask(),
+    "ver": VerticalGradiantColorMask(),
+}
 
 
 class Misc(Cog):
@@ -444,19 +523,37 @@ class Misc(Cog):
         await ctx.reply(embed=emb)
         self.snipes[ctx.channel.id] = None
 
-    @commands.command(aliases=["trutht", "tt", "ttable"])
+    @commands.command(
+        aliases=["trutht", "tt", "ttable"],
+    )
     @commands.max_concurrency(1, per=commands.BucketType.user)
     @Context.with_type
     async def truthtable(self, ctx: Context, *, flags: TTFlag):
         """A simple command to generate Truth Table of given data. Make sure you use proper syntax.
         Syntax:
-                Truthtable --var *variable1*, *variable2*, *variable3* ... --con *condition1*, *condition2*, *condition3* ...`
+            Truthtable `--var *variable1*, *variable2*, *variable3* ... --con *condition1*, *condition2*, *condition3* ...`
         (Example: `tt --var a, b --con a and b, a or b`)
+        ```
+        Negation             : not, -, ~
+        Logical disjunction  : or
+        Logical nor          : nor
+        Exclusive disjunction: xor, !=
+        Logical conjunction  : and
+        Logical NAND         : nand
+        Material implication : =>, implies
+        Logical biconditional: =
+        ```
         """
-        table = ttg.Truths(
-            flags.var.split(","), flags.con.split(","), ints=False
-        ).as_prettytable()
-        await ctx.reply(f"```\n{table}\n```")
+        table = Truths(
+            flags.var.split(","),
+            flags.con.split(","),
+            ints=flags.ints,
+            ascending=flags.ascending,
+        )
+        main = table.as_tabulate(
+            index=False, table_format=flags.table_format, align=flags.aling
+        )
+        await ctx.reply(f"```{flags.table_format}\n{main}\n```")
 
     @commands.command(aliases=["w"])
     @commands.bot_has_permissions(embed_links=True)
@@ -718,6 +815,7 @@ class Misc(Cog):
         ctx: Context,
     ):
         """To make polls. Thanks to Strawpoll API"""
+        await self.bot.invoke_help_command(ctx)
 
     @poll.command(name="create")
     @commands.max_concurrency(1, per=commands.BucketType.user)
@@ -835,15 +933,22 @@ class Misc(Cog):
     @commands.cooldown(1, 5, commands.BucketType.member)
     @commands.max_concurrency(1, per=commands.BucketType.user)
     @Context.with_type
-    async def qrcode(self, ctx: Context, text: str):
-        """To generate the QR"""
-        await ctx.reply(
-            embed=discord.Embed(
-                color=ctx.author.color, timestamp=datetime.datetime.utcnow()
-            )
-            .set_image(url=f"https://normal-api.ml/createqr?text={text}")
-            .set_footer(text=f"{ctx.author}")
-        )
+    async def qrcode(self, ctx: Context, text: str, *, flags: QRCodeFlags):
+        """To generate the QR from the given Text"""
+        payload = {}
+        if flags.module_drawer:
+            payload["module_drawer"] = qr_modular.get(flags.module_drawer)
+        if flags.color_mask:
+            payload["color_mask"] = qr_modular.get(flags.color_mask)
+
+        if payload:
+            payload["image_factory"] = StyledPilImage
+        payload["board_size"] = flags.board_size
+        payload["border"] = flags.border
+        path = await _create_qr(text, **payload)
+        f = discord.File(path, filename="name.png")
+        e = discord.Embed().set_image(url="attachment://name.png")
+        await ctx.reply(embed=e, file=f)
 
     @commands.command(name="minecraftstatus", aliases=["mcs", "mcstatus"])
     @commands.cooldown(1, 5, commands.BucketType.member)

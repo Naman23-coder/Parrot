@@ -34,6 +34,7 @@ from collections import defaultdict
 
 from utilities.paginator import PaginationView
 from utilities import spookifications
+from utilities.constants import Colours
 
 from core import Parrot, Context, Cog
 
@@ -56,6 +57,9 @@ with open("extra/wyr.txt") as h:
 
 with open("extra/nhi.txt") as i:
     _nhi = i.read()
+
+with open("extra/twister.txt") as t:
+    _twister = t.read()
 
 with open(Path("extra/anagram.json"), "r") as f:
     ANAGRAMS_ALL = json.load(f)
@@ -329,7 +333,7 @@ class DynamicQuestionGen:
         """Generate a negative square root question."""
         ans_coeff = random.randint(3, 10)
 
-        question = q_format.format(ans_coeff ** 2)
+        question = q_format.format(ans_coeff**2)
         answer = a_format.format(ans_coeff)
 
         return QuizEntry(question, [answer], DYNAMICALLY_GEN_VARIATION_TOLERANCE)
@@ -398,39 +402,6 @@ DYNAMIC_QUESTIONS_FORMAT_FUNCS = {
     302: DynamicQuestionGen.taxonomic_rank,
     303: DynamicQuestionGen.base_units_convert,
 }
-
-
-class Colours:
-    blue = 0x0279FD
-    bright_green = 0x01D277
-    dark_green = 0x1F8B4C
-    orange = 0xE67E22
-    pink = 0xCF84E0
-    purple = 0xB734EB
-    soft_green = 0x68C290
-    soft_orange = 0xF9CB54
-    soft_red = 0xCD6D6D
-    yellow = 0xF9F586
-    python_blue = 0x4B8BBE
-    python_yellow = 0xFFD43B
-    grass_green = 0x66FF00
-    gold = 0xE6C200
-
-    easter_like_colours = [
-        (255, 247, 0),
-        (255, 255, 224),
-        (0, 255, 127),
-        (189, 252, 201),
-        (255, 192, 203),
-        (255, 160, 122),
-        (181, 115, 220),
-        (221, 160, 221),
-        (200, 162, 200),
-        (238, 130, 238),
-        (135, 206, 235),
-        (0, 204, 204),
-        (64, 224, 208),
-    ]
 
 
 def replace_many(
@@ -1588,80 +1559,6 @@ class Fun(Cog):
         hex_tuple = ImageColor.getrgb(f"#{hex_colour}")
         await self.send_colour_response(ctx, hex_tuple)
 
-    # @commands.command(aliases=["colours", "colour"])
-    # @commands.bot_has_permissions(embed_links=True)
-    # @commands.max_concurrency(1, per=commands.BucketType.user)
-    # @Context.with_type
-    # async def color(self, ctx: Context, colour):
-    #     """To get colour information using the hexadecimal codes."""
-    #     link = f"https://www.thecolorapi.com/id?format=json&hex={colour}"
-    #     async with aiohttp.ClientSession() as session:
-    #         async with session.get(link) as response:
-    #             if response.status == 200:
-    #                 res = await response.json()
-    #             else:
-    #                 return
-
-    #     green = round(res["rgb"]["fraction"]["g"], 2)
-    #     red = round(res["rgb"]["fraction"]["r"], 2)
-    #     blue = round(res["rgb"]["fraction"]["b"], 2)
-    #     _green = res["rgb"]["g"]
-    #     _red = res["rgb"]["r"]
-    #     _blue = res["rgb"]["b"]
-
-    #     # HSL VALUE
-    #     hue = round(res["hsl"]["fraction"]["h"], 2)
-    #     saturation = round(res["hsl"]["fraction"]["s"], 2)
-    #     lightness = round(res["hsl"]["fraction"]["l"], 2)
-    #     _hue = res["hsl"]["h"]
-    #     _saturation = res["hsl"]["s"]
-    #     _lightness = res["hsl"]["l"]
-
-    #     # HSV VALUE
-    #     hue_ = round(res["hsv"]["fraction"]["h"], 2)
-    #     saturation_ = round(res["hsv"]["fraction"]["s"], 2)
-    #     value_ = round(res["hsv"]["fraction"]["v"], 2)
-    #     _hue_ = res["hsv"]["h"]
-    #     _saturation_ = res["hsv"]["s"]
-    #     _value_ = res["hsv"]["v"]
-
-    #     # GENERAL
-    #     name = res["name"]["value"]
-    #     close_name_hex = res["name"]["closest_named_hex"]
-    #     exact_name = res["name"]["exact_match_name"]
-    #     distance = res["name"]["distance"]
-
-    #     embed = discord.Embed(
-    #         title="Parrot colour prompt",
-    #         timestamp=datetime.datetime.utcnow(),
-    #         colour=discord.Color.from_rgb(_red, _green, _blue),
-    #         description=f"Colour name: `{name}` | Close Hex code: `{close_name_hex}` | Having exact name? `{exact_name}` | Distance: `{distance}`",
-    #     )
-    #     embed.set_thumbnail(
-    #         url=f"https://some-random-api.ml/canvas/colorviewer?hex={colour}"
-    #     )
-    #     embed.set_footer(text=f"{ctx.author.name}")
-    #     fields = [
-    #         (
-    #             "RGB value (fraction)",
-    #             f"Red: `{_red}` (`{red}`)\nGreen: `{_green}` (`{green}`)\nBlue: `{_blue}` (`{blue}`)",
-    #             True,
-    #         ),
-    #         (
-    #             "HSL value (fraction)",
-    #             f"Hue: `{_hue}` (`{hue}`)\nSaturation: `{_saturation}` (`{saturation}`)\nLightness: `{_lightness}` (`{lightness}`)",
-    #             True,
-    #         ),
-    #         (
-    #             "HSV value (fraction)",
-    #             f"Hue: `{_hue_}` (`{hue_}`)\nSaturation: `{_saturation_}` (`{saturation_}`)\nValue: `{_value_}` (`{value_}`)",
-    #             True,
-    #         ),
-    #     ]
-    #     for name, value, inline in fields:
-    #         embed.add_field(name=name, value=value, inline=inline)
-    #     await ctx.reply(embed=embed)
-
     @commands.command()
     @commands.bot_has_permissions(embed_links=True)
     @commands.max_concurrency(1, per=commands.BucketType.user)
@@ -2269,6 +2166,29 @@ class Fun(Cog):
                 timestamp=datetime.datetime.utcnow(),
             )
             em.set_footer(text=f"{ctx.author.name}")
+        await ctx.reply(embed=em)
+
+    @commands.command()
+    @commands.bot_has_permissions(embed_links=True)
+    @commands.max_concurrency(1, per=commands.BucketType.user)
+    @Context.with_type
+    async def twister(self, ctx: Context, *, member: discord.Member = None):
+        """I scream, you scream, we all scream for ice-cream"""
+        t = _twister.split("\n")
+        if member is None:
+            em = discord.Embed(
+                title="Say",
+                description=f"{random.choice(t)}",
+                timestamp=datetime.datetime.utcnow(),
+            )
+            em.set_footer(text=f"{ctx.author}")
+        else:
+            em = discord.Embed(
+                title=f"{member} reply!",
+                description=f"{random.choice(t)}",
+                timestamp=datetime.datetime.utcnow(),
+            )
+            em.set_footer(text=f"{ctx.author}")
         await ctx.reply(embed=em)
 
     @commands.group(aliases=["https"], invoke_without_command=True)
@@ -3354,7 +3274,7 @@ class Fun(Cog):
     @commands.command(
         name="cathi",
     )
-    @commands.max_concurrency(1, per=commands.BucketType.user)
+    @commands.max_concurrency(1, per=commands.BucketType.channel)
     @commands.cooldown(1, 60, commands.BucketType.user)
     async def fun_animation_cathi(self, ctx: Context, text: str = None):
         """Make a cat say something"""
@@ -3380,7 +3300,7 @@ class Fun(Cog):
                 await asyncio.sleep(1)
 
     @commands.command(name="flop")
-    @commands.max_concurrency(1, per=commands.BucketType.user)
+    @commands.max_concurrency(1, per=commands.BucketType.channel)
     @commands.cooldown(1, 60, commands.BucketType.user)
     async def fun_animation_flop(self, ctx: Context):
         """Flop"""
@@ -3397,7 +3317,7 @@ class Fun(Cog):
             await asyncio.sleep(1.5)
 
     @commands.command(name="poof", hidden=True)
-    @commands.max_concurrency(1, per=commands.BucketType.user)
+    @commands.max_concurrency(1, per=commands.BucketType.channel)
     @commands.cooldown(1, 60, commands.BucketType.user)
     async def fun_animation_poof(self, ctx: Context):
         """Poof"""
@@ -3408,7 +3328,7 @@ class Fun(Cog):
             await asyncio.sleep(1.5)
 
     @commands.command(name="virus", hidden=True)
-    @commands.max_concurrency(1, per=commands.BucketType.user)
+    @commands.max_concurrency(1, per=commands.BucketType.channel)
     @commands.cooldown(1, 60, commands.BucketType.user)
     async def fun_animation_virus(
         self, ctx: Context, user: discord.Member = None, virus: str = "trojan"
@@ -3435,7 +3355,7 @@ class Fun(Cog):
             await asyncio.sleep(1)
 
     @commands.command(name="boom", hidden=True)
-    @commands.max_concurrency(1, per=commands.BucketType.user)
+    @commands.max_concurrency(1, per=commands.BucketType.channel)
     @commands.cooldown(1, 60, commands.BucketType.user)
     async def fun_animation_boom(self, ctx: Context):
         """Booms a message!"""
@@ -3455,7 +3375,7 @@ class Fun(Cog):
             await m.edit(content=i)
 
     @commands.command(name="table", hidden=True)
-    @commands.max_concurrency(1, per=commands.BucketType.user)
+    @commands.max_concurrency(1, per=commands.BucketType.channel)
     @commands.cooldown(1, 60, commands.BucketType.user)
     async def fun_animation_table(self, ctx: Context):
         m = await ctx.send("`(\°-°)\  ┬─┬`")
@@ -3479,30 +3399,20 @@ class Fun(Cog):
             await m.edit(content=k)
 
     @commands.command(name="funwarn", hidden=True)
-    @commands.max_concurrency(1, per=commands.BucketType.user)
+    @commands.max_concurrency(1, per=commands.BucketType.channel)
     @commands.cooldown(1, 60, commands.BucketType.user)
     async def fun_animation_warning(self, ctx: Context):
         msg = await ctx.send("...")
         ls = (
-            "```diff\n- LOAD !! WARNING !! SYSTEM OVER -\n```",
             "```diff\n- OAD !! WARNING !! SYSTEM OVERL -\n```",
-            "```diff\n- AD !! WARNING !! SYSTEM OVERLO -\n```",
             "```diff\n- D !! WARNING !! SYSTEM OVERLOA -\n```",
-            "```diff\n-  !! WARNING !! SYSTEM OVERLOAD -\n```",
             "```diff\n- !! WARNING !! SYSTEM OVERLOAD  -\n```",
-            "```diff\n- ! WARNING !! SYSTEM OVERLOAD ! -\n```",
             "```diff\n-  WARNING !! SYSTEM OVERLOAD !! -\n```",
-            "```diff\n- WARNING !! SYSTEM OVERLOAD !!  -\n```",
             "```diff\n- ARNING !! SYSTEM OVERLOAD !! W -\n```",
-            "```diff\n- RNING !! SYSTEM OVERLOAD !! WA -\n```",
             "```diff\n- NING !! SYSTEM OVERLOAD !! WAR -\n```",
-            "```diff\n- ING !! SYSTEM OVERLOAD !! WARN -\n```",
             "```diff\n- NG !! SYSTEM OVERLOAD !! WARNI -\n```",
-            "```diff\n- G !! SYSTEM OVERLOAD !! WARNIN -\n```",
             "```diff\n-  !! SYSTEM OVERLOAD !! WARNING -\n```",
-            "```diff\n- !! WARNING !! SYSTEM OVERLOAD  -\n```",
             "```diff\n- ! SYSTEM OVERLOAD !! WARNING ! -\n```",
-            "```diff\n-  SYSTEM OVERLOAD !! WARNING !! -\n```",
             "```diff\n- IMMINENT SHUT-DOWN IN 0.5 SEC! -\n```",
             "```diff\n- WARNING !! SYSTEM OVERLOAD !!  -\n```",
             "```diff\n- IMMINENT SHUT-DOWN IN 0.2 SEC! -\n```",

@@ -10,9 +10,10 @@ import traceback
 import aiohttp
 import topgg
 import socket
+import re
 from collections import Counter, deque, defaultdict
 import discord
-from discord.ext import commands  # , ipc
+from discord.ext import commands, tasks  # , ipc
 
 from aiohttp import AsyncResolver, ClientSession, TCPConnector
 from lru import LRU
@@ -31,6 +32,7 @@ from utilities.config import (
 )
 from utilities.database import parrot_db, cluster
 from utilities.checks import _can_run
+from utilities.paste import Client
 
 from time import time
 
@@ -42,6 +44,7 @@ collection_ban = parrot_db["banned_users"]
 os.environ["JISHAKU_HIDE"] = "True"
 os.environ["JISHAKU_NO_UNDERSCORE"] = "True"
 os.environ["JISHAKU_NO_DM_TRACEBACK"] = "True"
+os.environ["JISHAKU_FORCE_PAGINATOR"] = "True"
 
 intents = discord.Intents.default()
 intents.members = True
@@ -99,8 +102,8 @@ class Parrot(commands.AutoShardedBot):
         self.http_session = ClientSession(
             connector=TCPConnector(resolver=AsyncResolver(), family=socket.AF_INET)
         )
-        # self.ipc = ipc.Server(self,)
         self.server_config = LRU(8)
+        self.mystbin = Client()
         for ext in EXTENSIONS:
             try:
                 self.load_extension(ext)
@@ -277,11 +280,20 @@ class Parrot(commands.AutoShardedBot):
     async def on_message(self, message: discord.Message) -> None:
         self._seen_messages += 1
 
-        if not message.guild:
+        if message.guild is None or message.author.bot:
             # to prevent the usage of command in DMs
             return
 
         await self.process_commands(message)
+
+    async def on_message_edit(
+        self, before: discord.Message, after: discord.Message
+    ) -> None:
+        if after.guild is None or after.author.bot:
+            return
+
+        if before.content != after.content and before.author.id in OWNER_IDS:
+            await self.process_commands(after)
 
     async def resolve_member_ids(self, guild: discord.Guild, member_ids: list):
         needs_resolution = []
@@ -356,7 +368,9 @@ class Parrot(commands.AutoShardedBot):
         ):
             return msg
 
-    async def get_prefix(self, message: discord.Message) -> str:
+    async def get_prefix(
+        self, message: discord.Message
+    ) -> typing.Union[str, typing.List[str]]:
         """Dynamic prefixing"""
         try:
             prefix = self.server_config[message.guild.id]["prefix"]
@@ -375,8 +389,11 @@ class Parrot(commands.AutoShardedBot):
                 prefix = "$"  # default prefix
                 await collection.insert_one(post)
             self.server_config[message.guild.id] = post
-        finally:
-            return commands.when_mentioned_or(prefix)(self, message)
+        comp = re.compile(f"^({re.escape(prefix)}).*", flags=re.I)
+        match = comp.match(message.content)
+        if match is not None:
+            prefix = match.group(1)
+        return commands.when_mentioned_or(prefix)(self, message)
 
     async def get_guild_prefixes(self, guild: discord.Guild) -> typing.Optional[str]:
         try:
@@ -392,3 +409,8 @@ class Parrot(commands.AutoShardedBot):
 
     async def invoke_help_command(self, ctx: Context) -> None:
         return await ctx.send_help(ctx.command)
+
+    @tasks.loop(count=1)
+    async def update_server_config_cache(self, guild_id: int):
+        if data := await collection.find_one({"_id": guild_id}):
+            self.server_config[guild_id] = data

@@ -6,8 +6,11 @@ import discord
 import re
 from discord.ext import commands
 from yaml import safe_load as yaml_load
+from utilities.paste import paste
 
 from ._tio import Tio
+
+from core import Parrot
 
 with open("extra/lang.txt") as f:
     languages = f.read().split("\n")
@@ -66,7 +69,7 @@ async def get_message(interaction: discord.Interaction, fetch=False) -> discord.
 
 
 class RerunBtn(discord.ui.Button):
-    def __init__(self, bot, **kwargs):
+    def __init__(self, bot: Parrot, **kwargs):
         super().__init__(**kwargs)
         self.bot = bot
 
@@ -90,11 +93,14 @@ class RerunBtn(discord.ui.Button):
 
         # we need to strip the prefix and command name ('do run '), the prefix
         # having multiple and even custom possible values
-        parrot_db = await self.bot.db("parrot_db")
-        collection = parrot_db["server_config"]
-        data = await collection.find_one({"_id": interaction.guild_id})
-        if payload.startswith(data["prefix"]):
-            payload = payload[len(data["prefix"]) + 4 :]
+
+        prefix = await self.bot.get_guild_prefixes(interaction.guild)
+        if payload.startswith(prefix):
+            match = re.match(rf"{prefix}( )?run ", payload)
+            if not match:
+                return
+            span = match.span()
+            payload = payload[span[1] :]  # this should work
 
         language, text, errored = prepare_payload(payload)
 
@@ -107,14 +113,14 @@ class RerunBtn(discord.ui.Button):
 
 
 class Refresh(discord.ui.View):
-    def __init__(self, bot, no_rerun, timeout=300):
-        super().__init__()
+    def __init__(self, bot: Parrot, no_rerun, timeout: float = 300):
+        super().__init__(timeout=timeout)
 
         item = RerunBtn(
             bot=bot,
             label="Run again",
             style=discord.ButtonStyle.grey,
-            emoji="🔄",
+            emoji="\N{ANTICLOCKWISE DOWNWARDS AND UPWARDS OPEN CIRCLE ARROWS}",
             disabled=no_rerun,
         )
 
@@ -122,7 +128,9 @@ class Refresh(discord.ui.View):
 
         self.children.reverse()  # Run again first
 
-    @discord.ui.button(label="Delete", style=discord.ButtonStyle.grey, emoji="🗑")
+    @discord.ui.button(
+        label="Delete", style=discord.ButtonStyle.grey, emoji="\N{WASTEBASKET}"
+    )
     async def delete(self, button: discord.ui.Button, interaction: discord.Interaction):
         message = await get_message(interaction)
 
@@ -143,7 +151,7 @@ class Refresh(discord.ui.View):
         self.stop()
 
 
-async def execute_run(bot, language, code, rerun=False) -> tuple:
+async def execute_run(bot: Parrot, language, code, rerun=False) -> tuple:
     # Powered by tio.run
 
     options = {"--stats": False, "--wrapped": False}
@@ -202,13 +210,14 @@ async def execute_run(bot, language, code, rerun=False) -> tuple:
         "q#": "qs",
         "rs": "rust",
         "sh": "bash",
+        "python": "python",
     }
 
-    lang = quickmap.get(lang)
+    lang = quickmap.get(lang) or lang
 
     if lang in default_langs:
         lang = default_langs[lang]
-    if lang not in languages:
+    if lang not in languages:  # this is intentional
         matches = []
         i = 0
         for language in languages:
@@ -268,14 +277,14 @@ async def execute_run(bot, language, code, rerun=False) -> tuple:
         # If it exceeds 2000 characters (Discord longest message), counting ` and ph\n characters
         # Or if it floods with more than 40 lines
         # Create a hastebin and send it back
-        link = await paste(result)
+        link = await bot.mystbin.post(result)
 
         if link is None:
             output = (
                 "Your output was too long, but I couldn't make an online bin out of it."
             )
         else:
-            output = f"Output was too long (more than 2000 characters or 40 lines) so I put it here: {link}"
+            output = f"Output was too long (more than 2000 characters or 40 lines) so I put it here: {link.url}"
 
         return output
 
@@ -288,7 +297,7 @@ async def execute_run(bot, language, code, rerun=False) -> tuple:
     return f"```p\n{output}```"
 
 
-def get_raw(link):
+def get_raw(link: str) -> str:
     """Returns the url for raw version on a hastebin-like"""
     link = link.strip("<>/")  # Allow for no-embed links
 
@@ -300,7 +309,7 @@ def get_raw(link):
 
     if not any(link.startswith(url) for url in authorized):
         raise commands.BadArgument(
-            message=f"I only accept links from {', '.join(authorized)}. (Starting with 'http')."
+            message=f"Bot only accept links from {', '.join(authorized)}. (Starting with 'http')."
         )
 
     domain = link.split("/")[2]
@@ -317,22 +326,6 @@ def get_raw(link):
     if "/raw" in link:
         return link
     return link + "/raw"
-
-
-async def paste(text):
-    """Return an online bin of given text"""
-    async with aiohttp.ClientSession() as aioclient:
-        post = await aioclient.post("https://hastebin.com/documents", data=text)
-        if post.status == 200:
-            response = await post.text()
-            return f"https://hastebin.com/{response[8:-2]}"
-
-        # Rollback bin
-        post = await aioclient.post(
-            "https://bin.readthedocs.fr/new", data={"code": text, "lang": "txt"}
-        )
-        if post.status == 200:
-            return post.url
 
 
 def typing(func):

@@ -8,7 +8,7 @@ from utilities.database import parrot_db
 from utilities.infraction import warn
 from utilities.regex import LINKS_NO_PROTOCOLS, LINKS_RE
 
-from core import Parrot, Cog
+from core import Parrot, Cog, Context
 
 with open("extra/duke_nekum.txt") as f:
     quotes = f.read().split("\n")
@@ -18,16 +18,13 @@ class LinkProt(Cog):
     def __init__(self, bot: Parrot):
         self.bot = bot
         self.collection = parrot_db["server_config"]
-        self.data = {}
-        self.update_data.start()
 
     async def has_links(self, message_content: str) -> bool:
         url1 = LINKS_NO_PROTOCOLS.search(message_content)
         url2 = LINKS_RE.search(message_content)
         return bool(url1 or url2)
 
-    @Cog.listener()
-    async def on_message(self, message: discord.Message):
+    async def _message_passive(self, message: discord.Message):
         if message.author.bot or (not message.guild):
             return
         perms = message.author.guild_permissions
@@ -79,7 +76,8 @@ class LinkProt(Cog):
                     message=message,
                     at=message.created_at,
                 )
-
+                ctx = await self.bot.get_context(message, cls=Context)
+                await self.bot.get_cog("Moderator").warn(target=message.author, cls=ctx)
             has_links = await self.has_links(message.content)
 
             if has_links:
@@ -88,6 +86,11 @@ class LinkProt(Cog):
                     delete_after=10,
                 )
 
-    @tasks.loop(hours=0.5)
-    async def update_data(self):
-        pass
+    @Cog.listener()
+    async def on_message(self, message: discord.Message):
+        await self._message_passive(message)
+
+    @Cog.listener()
+    async def on_message_edit(self, before: discord.Message, after: discord.Message):
+        if before.content != after.content:
+            await self._message_passive(after)

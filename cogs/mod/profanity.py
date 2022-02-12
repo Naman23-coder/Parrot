@@ -9,7 +9,7 @@ import random
 import re
 from utilities.database import parrot_db
 from utilities.infraction import warn
-from core import Parrot, Cog
+from core import Parrot, Cog, Context
 
 with open("extra/duke_nekum.txt") as f:
     quotes = f.read().split("\n")
@@ -28,13 +28,15 @@ class Profanity(Cog):
         except KeyError:
             return None
 
+    def cog_unload(self):
+        self.update_data.cancel()
+
     def isin(self, phrase: str, sentence: str) -> bool:
         word = re.escape(phrase)
         pattern = rf"\b{word}\b"
         return re.search(pattern, sentence) is not None
 
-    @Cog.listener()
-    async def on_message(self, message: discord.Message):
+    async def _one_message_passive(self, message: discord.Message):
         if message.author.bot or (not message.guild):
             return
         perms = message.author.guild_permissions
@@ -89,6 +91,8 @@ class Profanity(Cog):
                     message=message,
                     at=message.created_at,
                 )
+                ctx = await self.bot.get_context(message, cls=Context)
+                await self.bot.get_cog("Moderator").warn(target=message.author, cls=ctx)
 
             if any(self.isin(word, message.content.lower()) for word in bad_words):
                 await message.channel.send(
@@ -96,7 +100,16 @@ class Profanity(Cog):
                     delete_after=10,
                 )
 
-    @tasks.loop(seconds=5)
+    @Cog.listener()
+    async def on_message(self, message: discord.Message):
+        await self._one_message_passive(message)
+
+    @Cog.listener()
+    async def on_message_edit(self, before: discord.Message, after: discord.Message):
+        if before.content != after.content:
+            await self._one_message_passive(after)
+
+    @tasks.loop(seconds=900)
     async def update_data(self):
         async for data in self.collection.find({}):
             try:
@@ -104,3 +117,7 @@ class Profanity(Cog):
             except KeyError:
                 return
             self.data[data["_id"]] = bad_words
+
+    @update_data.before_loop
+    async def before_data_update(self):
+        await self.bot.wait_until_ready()

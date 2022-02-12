@@ -32,12 +32,12 @@ class auditFlag(
 ):
     guild: typing.Optional[discord.Guild]
     limit: typing.Optional[int] = 100
-    action: typing.Optional[str]
-    before: typing.Optional[ShortTime]
-    after: typing.Optional[ShortTime]
+    action: typing.Optional[str] = None
+    before: typing.Optional[ShortTime] = None
+    after: typing.Optional[ShortTime] = None
     oldest_first: typing.Optional[convert_bool] = False
     user: typing.Union[discord.User, discord.Member, int]
-    action: typing.Optional[str]
+    action: typing.Optional[str] = None
 
 
 act = {
@@ -264,11 +264,15 @@ class Owner(Cog, command_attrs=dict(hidden=True)):
     @commands.command()
     @commands.is_owner()
     async def spy_server(
-        self, ctx: Context, guild: discord.Guild = None, channel_member: str = None
+        self,
+        ctx: Context,
+        guild: typing.Union[discord.Guild, int] = None,
+        channel_member: str = None,
     ):
         """This is not really a spy command"""
         guild = guild or ctx.guild
-        URL = f"https://discord.com/api/guilds/{guild.id}/widget.json"
+        channel_member = channel_member or "members"
+        URL = f"https://discord.com/api/guilds/{guild.id if type(guild) is discord.Guild else guild}/widget.json"
         data = await self.bot.session.get(URL)
         json = await data.json()
         if "message" in json:
@@ -404,6 +408,17 @@ class Owner(Cog, command_attrs=dict(hidden=True)):
                             )
                 except Exception as e:
                     print(e)
+
+    @commands.command()
+    async def python(self, ctx: Context, *, text: str):
+        try:
+            async with async_open(
+                f"extra/tutorials/python/{text.replace(' ', '-')}.md"
+            ) as f:
+                data = await f.read()
+        except Exception as e:
+            return await ctx.send(e)
+        await ctx.send(embed=discord.Embed(description=data))
 
 
 class SphinxObjectFileReader:

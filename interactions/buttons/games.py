@@ -28,6 +28,7 @@ import tabulate
 from aiofile import async_open
 from interactions.buttons.secret_hitler.ui.join import JoinUI
 from utilities.paginator import ParrotPaginator
+from utilities.constants import Colours
 
 emoji = emojis  # Idk
 SMALL = 3
@@ -126,7 +127,7 @@ POINTS = {
     5: 2,
     6: 3,
     7: 5,
-} | {x: 11 for x in range(8, SUPER_BIG ** 2)}
+} | {x: 11 for x in range(8, SUPER_BIG**2)}
 
 
 class Position(NamedTuple):
@@ -1845,14 +1846,17 @@ class GameC4:
                 )
                 return
             else:
-                await message.delete()
+                await message.delete(delay=0)
                 if str(reaction.emoji) == CROSS_EMOJI:
                     await self.game_over(
                         "quit", self.player_active, self.player_inactive
                     )
                     return
 
-                await self.message.remove_reaction(reaction, user)
+                try:
+                    await self.message.remove_reaction(reaction, user)
+                except discord.Forbidden:
+                    pass
 
                 column_num = self.unicode_numbers.index(str(reaction.emoji))
                 column = [row[column_num] for row in self.grid]
@@ -2318,39 +2322,6 @@ NUMBERS = [
 
 CROSS_EMOJI = "\u274e"
 HAND_RAISED_EMOJI = "\U0001f64b"
-
-
-class Colours:
-    blue = 0x0279FD
-    bright_green = 0x01D277
-    dark_green = 0x1F8B4C
-    orange = 0xE67E22
-    pink = 0xCF84E0
-    purple = 0xB734EB
-    soft_green = 0x68C290
-    soft_orange = 0xF9CB54
-    soft_red = 0xCD6D6D
-    yellow = 0xF9F586
-    python_blue = 0x4B8BBE
-    python_yellow = 0xFFD43B
-    grass_green = 0x66FF00
-    gold = 0xE6C200
-
-    easter_like_colours = [
-        (255, 247, 0),
-        (255, 255, 224),
-        (0, 255, 127),
-        (189, 252, 201),
-        (255, 192, 203),
-        (255, 160, 122),
-        (181, 115, 220),
-        (221, 160, 221),
-        (200, 162, 200),
-        (238, 130, 238),
-        (135, 206, 235),
-        (0, 204, 204),
-        (64, 224, 208),
-    ]
 
 
 class GameBattleShip:
@@ -3458,7 +3429,7 @@ class Games(Cog):
                 )
             ls = []
             async with async_open(
-                fr"extra/sokoban/level{level if level else 1}.txt", "r"
+                rf"extra/sokoban/level{level if level else 1}.txt", "r"
             ) as fp:
                 lvl_str = await fp.read()
             for i in lvl_str.split("\n"):
